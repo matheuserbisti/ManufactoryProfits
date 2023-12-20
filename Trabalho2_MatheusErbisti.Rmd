@@ -1,0 +1,1327 @@
+---
+title: ""
+output:
+  pdf_document:
+    number_sections: true
+    includes:
+      in_header: D:\MATHEUS\Estatística\7º semestre\Análise de Séries Temporais\Trabalho 1\head.tex
+link-citations: true
+---
+
+\centering
+\raggedright
+\begin{center}
+```{r pressure, echo=FALSE,out.width = '50%',fig.align='center'}
+knitr::include_graphics("unb.jpg")
+```
+ \Large Universidade de Brasília\\
+ IE - Departamento de Estatística\\
+ Análise de Séries Temporais
+\end{center} 
+ \vskip 12em
+\begin{center}
+ \Large \textbf{Trabalho Prático 2}
+ \par
+ \vskip 7em
+\end{center}
+\setlength{\baselineskip}{.5cm}
+\small \textbf{}
+\par
+\vskip 5em
+
+\begin{flushright}
+\small Matheus Erbisti Pontes - 180024990\\
+\vskip 2em
+\small Prof. José Augusto Fiorucci
+\end{flushright}
+
+\vskip 6em
+\begin{center}
+\setlength{\baselineskip}{.5cm}
+Brasília\\
+\vskip 1em
+Outubro de 2021
+\end{center}
+\newpage
+\renewcommand{\contentsname}{Sumário}
+\tableofcontents
+\newpage
+
+\justify
+
+# Descrição do banco de dados
+
+\fontsize{13pt}{14pt}\selectfont
+
+O presente relatório tem o seu propósito primário o ajuste de modelos ARIMA e ETS à uma série temporal oriunda do banco de dados da competição M3, de acordo com orientações do professor José Augusto Fiorucci. Além disso, também será realizado a decomposição da série, análise de resíduos, estudo da capacidade preditiva, previsões pontuais e intervalares, e a verificação da acurácia do modelo em relação à outros..
+
+Então, foi escolhida a série de "id" igual a 2726, que representa mensalmente as médias de lucro semanais do setor de manufatura. No total, ela possui 117 observações de treino (in-sample) a serem utilizadas na parte de modelagem, enquanto as 18 observações de teste (out-sample) servirão o propósito de validar e medir a acurácia dos modelos ajustados.
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+pacman::p_load("Mcomp", "forecast", "ggplot2", "tseries", "knitr", "gridExtra", "forecTheta")
+
+data(M3)
+id <- 2726
+M3[[id]]
+h <- M3[[id]]$h
+treino <- M3[[id]]$x
+teste <- M3[[id]]$xx
+```
+
+Sendo assim, temos abaixo o gráfico da série histórica apenas com os dados *in-sample*:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+autoplot(treino) +
+  labs(x = "Ano", y = "Valores (US$)", title = "Lucro médio do setor de manufatura") +
+  theme_bw()
+```
+
+Em um estudo inicial com o recurso gráfico, vemos uma clara tendência de crescimento na série; ou seja, a série escolhida é não-estacionária. Além disso, parece existir também uma componente sazonal, evidenciado pelas observações finais de cada ano, que são sempre superiores as restantes do mesmo ano. Ainda assim, essa análise é estritamente subjetiva, e será estudada mais a fundo em breve.
+
+\newpage
+
+# Decomposição da Série via MSTL
+
+Nessa parte do seminário, iremos reduzir a série temporal em diferentes componentes, cujo intuito é simplificar toda o estudo dos dados. Então, seguindo orientações passadas pelo professor Fiorucci, a decomposição será feita pelo MSTL (Multiple STL). Logo, obtemos:
+
+```{r echo=FALSE, warning=FALSE}
+decomp.mstl <- mstl(treino)
+autoplot(decomp.mstl) +
+  labs(x = "Ano", title = "Decomposição via MSTL") +
+  theme_bw()
+```
+
+Com isso, observamos novamente a tendência de crescimento desde o início até o fim da série. No que se refere à sazonalidade, percebe-se que ela parece estável ao longo do tempo, atingindo valores próximos em meses comparativos; ainda assim, a escala de seus valores são relativamente pequenos em comparação com a escala da série e da tendência. Enfim, os ruídos tem aparência aleatória, média próxima de zero e variância constante, indicando uma decomposição bem sucedida.
+
+\newpage
+
+# Seleção manual do modelo ARIMA adequado
+
+Chegamos então em uma etapa que requer análises mais aprofundadas sobre a série, devido ao fato de necessitarmos estudar várias propriedades e características para definir o modelo ARIMA mais adequado. Em primeira instância, foi observado no gráfico da série e na decomposição MSTL a presença de tendência na série; ainda assim, encontra-se abaixo o resultado dos testes de estacionariedade:
+
+```{r echo=FALSE, warning=FALSE}
+x <- data.frame("KPSS" = c("<0.01", "1"),
+                row.names = c("p-valor", "ndiffs"))
+
+kable(x)
+```
+
+Tendo em vista tudo o que foi exposto e, em especial o p-valor obtido, rejeitamos a hipótese nula de que a série é estacionária, em um nível de significância $\alpha = 0.05$.
+
+Portanto, dado que a série é tendenciosa, devemos tomar a primeira diferença na série pois, de acordo com o resultado da função ndiffs, espera-se ser o suficiente para torná-la estacionária. Logo, temos abaixo o comparativo da série original e a série diferenciada:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+treino_d <- diff(treino)
+
+x <- autoplot(treino) +
+  labs(x = "Ano", y = "Valores", title = "Série Original") +
+  theme_bw()
+
+y <- autoplot(treino_d) +
+  labs(x = "Ano", y = "Valores", title = "Primeira Diferença") +
+  theme_bw()
+
+grid.arrange(x, y, newpage = F, nrow = 2)
+```
+
+Aparentemente, a primeira diferença foi o suficiente para tornar a série estacionária. Enfim, repetiremos os testes de hipótese anteriores com o intuito de confirmar a estacionariedade da série. Abaixo, encontra-se:
+
+```{r echo=FALSE, warning=FALSE}
+x <- data.frame("KPSS" = c(">0.1", "0"), 
+                row.names = c("p-valor", "ndiffs"))
+
+kable(x)
+```
+
+Considerando nível de significância de 5%, somos incapazes de rejeitar a hipótese de estacionariedade através do p-valor, o que nos indica mais ainda que a série não possui mais tendência. Contudo, agora devemos verificar se é necessário alguma diferença sazonal:
+
+```{r echo=FALSE, warning=FALSE}
+x <- data.frame("nsdiffs" = c(1))
+
+kable(x)
+```
+
+Segundo o que a função nsdiffs indica, a série ainda não é estacionária, isso é, é necessitamos realizar uma outra diferença, dessa vez na componente sazonal. Então, temos:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+treino_d2 <- diff(treino_d, lag = 12)
+
+x <- autoplot(treino_d) +
+  labs(x = "Ano", y = "Valores", title = "Primeira Diferença") +
+  theme_bw()
+
+y <- autoplot(treino_d2) +
+  labs(x = "Ano", y = "Valores", title = "Diferença Sazonal") +
+  theme_bw()
+
+grid.arrange(x, y, newpage = F, nrow = 2)
+```
+
+Finalmente, a série agora é estacionária. Sendo assim, já sabemos que d = 1 e D = 1, pois foi preciso realizar uma diferença simples e uma diferença sazonal, respectivamente. Dito isso, agora necessitamos encontrar os valores restantes da ordem do modelo (p, q, P, Q). Nesse contexto, temos os dois gráficos ACF e PACF da série com ambas as diferenças abaixo, que representam visualmente a função estimada de autocorrelação e autocorrelação parcial, respectivamente.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=10}
+par(mfrow = c(1, 2))
+acf(treino_d2, lag.max = 5*12, main = "")
+pacf(treino_d2, lag.max = 5*12, main = "")
+```
+
+Observando os gráficos acima, temos as seguintes observações:
+
+* Como ocorre a quebra no lag 1 do PACF, temos p = 0 ou p = 1.
+* No ACF, existe quebra no lag 1 e no lag 3, então q = 1 ou q = 3.
+* Ambos os gráficos parecem mostrar correlações significativas nos lags sazonais, portanto P = 0 ou P = 1, e Q = 0 ou Q = 1.
+
+Logo, elabora-se os seguintes modelos candidatos:
+
+* Modelo 1 - SARIMA(0,1,1)X(0,1,0)$_{12}$
+* Modelo 2 - SARIMA(0,1,3)X(0,1,0)$_{12}$
+* Modelo 3 - SARIMA(1,1,1)X(0,1,0)$_{12}$
+* Modelo 4 - SARIMA(1,1,3)X(0,1,0)$_{12}$
+
+* Modelo 5 - SARIMA(0,1,1)X(1,1,0)$_{12}$ 
+* Modelo 6 - SARIMA(0,1,3)X(1,1,0)$_{12}$
+* Modelo 7 - SARIMA(1,1,1)X(1,1,0)$_{12}$
+* Modelo 8 - SARIMA(1,1,3)X(1,1,0)$_{12}$
+
+* Modelo 9 - SARIMA(0,1,1)X(0,1,1)$_{12}$ 
+* Modelo 10 - SARIMA(0,1,3)X(0,1,1)$_{12}$
+* Modelo 11 - SARIMA(1,1,1)X(0,1,1)$_{12}$
+* Modelo 12 - SARIMA(1,1,3)X(0,1,1)$_{12}$
+
+* Modelo 13 - SARIMA(0,1,1)X(1,1,1)$_{12}$ 
+* Modelo 14 - SARIMA(0,1,3)X(1,1,1)$_{12}$
+* Modelo 15 - SARIMA(1,1,1)X(1,1,1)$_{12}$
+* Modelo 16 - SARIMA(1,1,3)X(1,1,1)$_{12}$
+
+
+Então, após o ajuste dos modelos, obteve-se os seguintes coeficientes estimados:
+
+\newpage
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+mod1 <- arima(treino, order = c(0, 1, 1), seasonal = c(0, 1, 0))
+mod2 <- arima(treino, order = c(0, 1, 3), seasonal = c(0, 1, 0))
+mod3 <- arima(treino, order = c(1, 1, 1), seasonal = c(0, 1, 0))
+mod4 <- arima(treino, order = c(1, 1, 3), seasonal = c(0, 1, 0))
+
+mod5 <- arima(treino, order = c(0, 1, 1), seasonal = c(1, 1, 0))
+mod6 <- arima(treino, order = c(0, 1, 3), seasonal = c(1, 1, 0))
+mod7 <- arima(treino, order = c(1, 1, 1), seasonal = c(1, 1, 0))
+mod8 <- arima(treino, order = c(1, 1, 3), seasonal = c(1, 1, 0))
+
+mod9 <- arima(treino, order = c(0, 1, 1), seasonal = c(0, 1, 1))
+mod10 <- arima(treino, order = c(0, 1, 3), seasonal = c(0, 1, 1))
+mod11 <- arima(treino, order = c(1, 1, 1), seasonal = c(0, 1, 1))
+mod12 <- arima(treino, order = c(1, 1, 3), seasonal = c(0, 1, 1))
+
+mod13 <- arima(treino, order = c(0, 1, 1), seasonal = c(1, 1, 1))
+mod14 <- arima(treino, order = c(0, 1, 3), seasonal = c(1, 1, 1))
+mod15 <- arima(treino, order = c(1, 1, 1), seasonal = c(1, 1, 1))
+mod16 <- arima(treino, order = c(1, 1, 3), seasonal = c(1, 1, 1))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+coeff <- data.frame(phi1 = c("", "", -0.177, -0.755,
+                             "", "", -0.142, -0.135,
+                             "", "", -0.142, -0.802,
+                             "", "", -0.142, -0.584),
+                    
+                    theta1 = c(-0.43, -0.514, -0.306, 0.312,
+                               -0.403, -0.436, -0.299, -0.305, 
+                               -0.366, -0.363, -0.255, 0.454, 
+                               -0.364, -0.361, -0.253, 0.217),
+                    
+                    theta2 = c("", 0.04, "", -0.376,
+                               "", 0.001, "", -0.063,
+                               "", 0.031, "", -0.280,
+                               "", 0.029, "", -0.188),
+                    
+                    theta3 = c("", 0.277, "", 0.312,
+                               "", 0.289, "", 0.291,
+                               "", 0.282, "", 0.266,
+                               "", 0.282, "", 0.278),
+                    
+                    varPhi1 = c("", "", "", "",
+                                -0.473, -0.457, -0.470, -0.459,
+                                "", "", "", "",
+                                -0.059, -0.062, -0.058, -0.032),
+                    
+                    varTheta1 = c("", "", "", "",
+                                  "", "", "", "",
+                                  -0.659, -0.646, -0.653, -0.641,
+                                  -0.617, -0.603, -0.612, -0.646),
+                    
+                    row.names = c("Modelo 1", "Modelo 2", "Modelo 3",
+                                  "Modelo 4", "Modelo 5", "Modelo 6",
+                                  "Modelo 7", "Modelo 8", "Modelo 9", 
+                                  "Modelo 10", "Modelo 11", "Modelo 12", 
+                                  "Modelo 13", "Modelo 14", "Modelo 15", 
+                                  "Modelo 16"))
+
+kable(coeff, caption = "Parâmetros Estimados dos Modelos")
+```
+
+Observando a tabela, nota-se alguns pontos:
+
+* Quando estimados, os coeficientes $\phi_1$, $\theta_3$, $\varphi_1$ e $\vartheta_1$ tiveram o mesmo sinal;
+* Mais da metade dos $\theta_2$ estimados foram relativamente próximos de zero;
+* $\vartheta_1$ possui valores bem próximos de si, sendo o coeficiente mais "consistente" em seus valores;
+* Quando o modelo assume Q = 1, $\varphi_1$ diminui bastante em relação a Q = 0.
+
+Como são muitos modelos e devemos escolher o melhor deles através dos critérios de parcimônia. Então:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+n <- length(treino)
+k <- c(1, 3, 2, 4,
+       2, 4, 3, 5,
+       2, 4, 3, 5,
+       3, 5, 4, 6)
+aic.arima <- unlist(lapply(list(mod1,mod2,mod3,mod4,
+                                mod5, mod6, mod7, mod8,
+                                mod9, mod10, mod11, mod12,
+                                mod13, mod14, mod15, mod16), AIC))
+aicc.arima <- aic.arima + (2*k^2 + 2*k)/(n - k - 1)
+
+x <- data.frame("AIC" = aic.arima, "AICc" = aicc.arima, 
+                row.names = c("Modelo 1", "Modelo 2", "Modelo 3", "Modelo 4",
+                              "Modelo 5", "Modelo 6", "Modelo 7", "Modelo 8",
+                              "Modelo 9", "Modelo 10", "Modelo 11", "Modelo 12",
+                              "Modelo 13", "Modelo 14", "Modelo 15", "Modelo 16"))
+
+kable(x, caption = "Critérios de Informação de Akaike")
+```
+
+Portanto, ambos os critérios de Informação de Akaike nos aponta para o Modelo 10 SARIMA(0,1,3)X(0,1,1)$_{12}$ como o de melhor desempenho, pois possui os menores valores da tabela.
+
+\newpage
+
+# Seleção manual do Modelo ETS adequado
+
+Para conseguir construir um modelo ETS apropriado para série em questão, é essencial relembrar que ela possui tendência e sazonalidade, conforme demonstrado na decomposição MSTL e nos testes de estacionariedade. Sendo assim, podemos ajustar os seguintes modelos:
+
+* ETS(A, A, A)
+* ETS(A, $A_d$, A)
+* ETS(A, M, A)
+* ETS(A, $M_d$, A)
+* ETS(M, A, A)
+* ETS(M, $A_d$, A)
+* ETS(M, M, A)
+* ETS(M, $M_d$, A)
+* ETS(M, A, M)
+* ETS(M, $A_d$, M)
+* ETS(M, M, M)
+* ETS(M, $M_d$, M)
+
+No momento, é incerto qual desses doze modelos se ajusta melhor à série. Logo, temos a tabela com os critérios de parcimônia:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ets1 <- ets(treino, model = "AAA", damped = F)
+ets2 <- ets(treino, model = "AAA", damped = T)
+ets3 <- ets(treino, model = "AMA", damped = F, restrict = F)
+ets4 <- ets(treino, model = "AMA", damped = T, restrict = F)
+ets5 <- ets(treino, model = "MAA", damped = F)
+ets6 <- ets(treino, model = "MAA", damped = T)
+ets7 <- ets(treino, model = "MMA", damped = F, restrict = F)
+ets8 <- ets(treino, model = "MMA", damped = T, restrict = F)
+ets9 <- ets(treino, model = "MAM", damped = F)
+ets10 <- ets(treino, model = "MAM", damped = T)
+ets11 <- ets(treino, model = "MMM", damped = F)
+ets12 <- ets(treino, model = "MMM", damped = T)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- data.frame("AIC" = c(ets1$aic, ets2$aic, ets3$aic, ets4$aic,
+                           ets5$aic, ets6$aic, ets7$aic, ets8$aic,
+                           ets9$aic, ets10$aic, ets11$aic, ets12$aic),
+                 "AICc" = c(ets1$aicc, ets2$aicc, ets3$aicc, ets4$aicc,
+                            ets5$aicc, ets6$aicc, ets7$aicc, ets8$aicc,
+                            ets9$aicc, ets10$aicc, ets11$aicc, ets12$aicc),
+                 row.names = c("Modelo 1", "Modelo 2", "Modelo 3", "Modelo 4", 
+                               "Modelo 5", "Modelo 6", "Modelo 7", "Modelo 8", 
+                               "Modelo 9", "Modelo 10", "Modelo 11", "Modelo 12"))
+
+kable(df, caption = "Critérios de Informação de Akaike")
+```
+
+De acordo com os valores obtidos, escolhemos o modelo 12 ETS(M, $M_d$, M), pois é o que apresentou os menores AIC e AICc. Desse modo, os coeficientes estimados do modelo 12 são:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- data.frame("alpha" = 0.6425, "beta" = 0.0253, gamma = "0.0001",
+                 "l0" = 3441.5265, "b0" = 1.055)
+
+kable(df, caption = "Coeficientes estimados do Modelo ETS(M, Md, M)")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- data.frame("S-11" = 1.0235, "S-10" = 1.0073, "S-9" = 1.0007, "S-8" = 1.007,
+                 "S-7" = 0.9921, "S-6" = 0.9904)
+
+kable(df, caption = "Parâmetros sazonais iniciais")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- data.frame("S-5" = 1.0035, "S-4" = 0.9975, "S-3" = 0.9926, "S-2" = 0.9977,
+                 "S-1" = 0.9902, "S0" = 0.9976)
+
+kable(df, caption = "Parâmetros sazonais iniciais")
+```
+
+Em especial, nota-se que o valor de $\gamma$ foi bem próximo de zero, ou seja, a sazonalidade do modelo deve ser considerada constante; tal resultado corrobora com o observado na decomposição MSTL.
+
+\newpage
+
+# Análise de Resíduos
+
+Aqui, estamos interessados na verificação de três propriedades nos resíduos do modelo. São elas:
+
+* Estacionariedade
+* Normalidade
+* Independência
+
+Sendo assim, vamos averiguar primeiro o modelo SARIMA escolhido anteriormente:
+
+## Modelo SARIMA(0,1,3)X(0,1,1)$_{12}$
+
+```{r echo=FALSE, fig.height=3, fig.width=8, message=FALSE, warning=FALSE}
+res_sarima <- window(mod10$residuals, start = time(treino)[13])
+
+
+x <- autoplot(res_sarima) +
+  labs(x = "Ano", y = "Resíduos") +
+  ggtitle("Estacionariedade")+
+  theme_bw()
+
+y <- data.frame(res_sarima) %>%
+  ggplot(aes(sample = res_sarima)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x = "Quantis Teóricos", y = "Quantis Amostrais") +
+  ggtitle("Normalidade")+
+  theme_bw()
+
+
+grid.arrange(x, y, newpage = F, nrow = 1)
+```
+
+```{r echo=FALSE, fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+par(mfrow = c(1, 2))
+acf(res_sarima, lag.max = 7*4, main = "Autocorrelações")
+pacf(res_sarima, lag.max = 7*4, main = "Autocorrelações Parciais")
+```
+
+Com os gráficos, percebemos:
+
+* Os resíduos parecem estacionários e com comportamento aleatório;
+* No gráfico QQ, os resíduos mostram comportamento Normal, embora tenha a presença de um outlier muito acentuado;
+* Pelo ACF e PACF, vemos uma pequena quebra no lag 11.
+
+Como os recursos visuais são subjetivos, devemos então aplicar os respectivos testes de hipóteses, a fim de obter informações objetivas sobre as características dos resíduos. Logo:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+a <- kpss.test(res_sarima)
+b <- shapiro.test(res_sarima)
+c <- Box.test(res_sarima, lag = 19, type = "Ljung-Box", fitdf = 4)
+
+x <- data.frame("Teste" = c("KPSS", "Shapiro-Wilk", "Ljung-Box"),
+                "Hipótese" = c("Estacionariedade", "Normalidade", "Independência"),
+                "Estatística" = round(c(a$statistic, b$statistic, c$statistic), 3),
+                "p-valor" = round(c(a$p.value, b$p.value, c$p.value), 3),
+                row.names = NULL)
+
+kable(x, caption = "Testes de Hipóteses")
+```
+
+Em um nível de significância $\alpha = 0.05$, não rejeitamos a hipótese nula de nenhum dos três testes pelo p-valor obtido. Isso é, podemos acreditar que os resíduos do modelo Modelo SARIMA(0,1,3)X(0,1,1)$_{12}$ são estacionários, independentes e Normais.
+
+## Modelo ETS(M, $M_d$, M)
+
+Analogamente à subseção anterior, devemos agora verificar os resíduos do modelo ETS selecionado. Então:
+
+```{r echo=FALSE, fig.height=3, fig.width=8, message=FALSE, warning=FALSE}
+res_ets <- ets12$residuals
+
+
+x <- autoplot(res_ets) +
+  labs(x = "Ano", y = "Resíduos") +
+  ggtitle("Estacionariedade")+
+  theme_bw()
+
+y <- data.frame(res_ets) %>%
+  ggplot(aes(sample = res_ets)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x = "Quantis Teóricos", y = "Quantis Amostrais") +
+  ggtitle("Normalidade")+
+  theme_bw()
+
+
+grid.arrange(x, y, newpage = F, nrow = 1)
+```
+
+```{r echo=FALSE, fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+par(mfrow = c(1, 2))
+acf(res_ets, lag.max = 7*4, main = "Autocorrelações")
+pacf(res_ets, lag.max = 7*4, main = "Autocorrelações Parciais")
+```
+
+Com os gráficos diretamente acima, observa-se:
+
+* Aparentemente os resíduos são estacionários;
+* Resíduos se comportam bem no gráfico QQ, mas novamente temos um outlier bem destacado;
+* Vemos novamente uma quebra no lag 11 do ACF e PACF, junto com pequenas quebras no lag 6 do ACF e lag 4 do PACF.
+
+Por fim, temos os testes para estacionariedade, normalidade e independência:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+a <- kpss.test(res_ets)
+b <- shapiro.test(res_ets)
+c <- Box.test(res_ets, lag = 15, type = "Ljung-Box", fitdf = 3)
+
+x <- data.frame("Teste" = c("KPSS", "Shapiro-Wilk", "Ljung-Box"),
+                "Hipótese" = c("Estacionariedade", "Normalidade", "Independência"),
+                "Estatística" = round(c(a$statistic, b$statistic, c$statistic), 3),
+                "p-valor" = round(c(a$p.value, b$p.value, c$p.value), 3),
+                row.names = NULL)
+
+kable(x, caption = "Testes de Hipóteses")
+```
+
+Empregando o uso de $\alpha = 0.05$, não podemos rejeitar a hipótese de estacionariedade e normalidade via p-valor, ou seja, os resíduos são considerados estacionários e Normais.
+
+Contudo, rejeita-se a hipótese de independência dos resíduos através do p-valor calculado no teste de Ljung-Box. Sendo assim, existe correlação significativa entre os resíduos do modelo.
+
+\newpage
+
+# Estudo da capacidade preditiva
+
+Nessa etapa, iremos realizar uma análise sobre a predição dos modelos SARIMA(0,1,3)X(0,1,1)$_{12}$ e ETS(M, $M_d$, M) escolhidos nas seções 3 e 4 respectivamente. Para tal, será utilizado o método de validação cruzada, que por sua vez é avaliada através da chamada "janela deslizante". 
+
+Sendo assim, o tamanho inicial da janela será até a observação de número 103 da série, crescendo linearmente de 1 em 1 ao longo de 10 passos, quando atingirá então um tamanho de 112 observações da série temporal. Em cada passo, será calculado a previsão dos modelos em um horizonte de tamanho 5 e, após isso, calculado o erro da previsão de cada uma das 5 previsões.
+
+Então, obtém-se as seguintes tabelas com os erros das previsões para cada passo dos modelos:
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+origem <- length(treino) - 14
+erros_sarima <- data.frame()
+erros_ets <- data.frame()
+mes_fim <- 7
+ano_fim <- 1991
+
+for (i in 1:10) {
+  serie_janela <- ts(treino[1:origem], start = c(1983, 1), end = c(ano_fim, mes_fim), frequency = 12)
+  
+  
+  janela_ets <- ets(serie_janela, model = "MMM", damped = T)
+  janela_sarima <- arima(serie_janela, order = c(0, 1, 3), seasonal = c(0, 1, 1))
+  
+  previsao_ets <- forecast(janela_ets, h = 5)
+  previsao_sarima <- forecast(janela_sarima, h = 5)
+  
+  errosEts_janela <- treino[(origem + 1):(origem + 5)] -  previsao_ets$mean
+  errosSarima_janela <- treino[(origem + 1):(origem + 5)] - previsao_sarima$mean 
+  
+  erros_ets <- rbind(erros_ets, errosEts_janela)
+  erros_sarima <- rbind(erros_sarima, errosSarima_janela)
+  
+  origem <- origem + 1
+  mes_fim <- mes_fim + 1
+  
+  if (mes_fim == 13){
+    mes_fim <- 1
+    ano_fim <- 1992
+  }
+}
+
+colnames(erros_ets) <- c("e1", "e2", "e3", "e4", "e5")
+colnames(erros_sarima) <- c("e1", "e2", "e3", "e4", "e5")
+
+row.names(erros_ets) <- c("Passo 1", "Passo 2", "Passo 3", "Passo 4", "Passo 5",
+                      "Passo 6","Passo 7","Passo 8","Passo 9","Passo 10")
+row.names(erros_sarima) <- c("Passo 1", "Passo 2", "Passo 3", "Passo 4", "Passo 5",
+                      "Passo 6","Passo 7","Passo 8","Passo 9","Passo 10")
+
+
+erro_medio <- data.frame("Horizonte" = c(1:5),
+                         "erros" = c(sum(abs(erros_sarima$e1)) / 10,
+                                     sum(abs(erros_sarima$e2)) / 10,
+                                     sum(abs(erros_sarima$e3)) / 10,
+                                     sum(abs(erros_sarima$e4)) / 10,
+                                     sum(abs(erros_sarima$e5)) / 10,
+                                     sum(abs(erros_ets$e1)) / 10,
+                                     sum(abs(erros_ets$e2)) / 10,
+                                     sum(abs(erros_ets$e3)) / 10,
+                                     sum(abs(erros_ets$e4)) / 10,
+                                     sum(abs(erros_ets$e5)) / 10),
+                         "modelo" = c(rep("SARIMA", 5), rep("ETS", 5)))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+kable(erros_sarima, caption = "Validação cruzada por janela deslizante do Modelo SARIMA")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+kable(erros_ets, caption = "Validação cruzada por janela deslizante do Modelo ETS")
+```
+
+Com o artifício tabular vemos que, de maneira geral, os erros do modelo ETS parecem ser maiores em módulo do que os do modelo SARIMA.
+
+Com o intuito de verificar a análise tabular, foi organizado um gráfico com os erros absolutos médios de cada modelo para cada valor do horizonte de previsão. Portanto:
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(erro_medio, aes(x = erro_medio$Horizonte, y = erro_medio$erros))+
+ geom_point(aes(color = erro_medio$modelo))+
+  geom_line(aes(color = erro_medio$modelo))+
+  scale_color_manual(values=c("#b32020", "#2036b3"), 
+                       name="Modelo",
+                       labels=c("ETS", "SARIMA"))+
+  theme_bw()+
+  labs(x = "Horizonte de Previsão", y = "Erro Absoluto Médio do Modelo",
+       title = "Erro Médio dos Modelos em cada Horizonte")
+```
+
+De fato, o modelo ETS possui um erro absoluto médio da previsão maior do que o modelo SARIMA, durante todo o horizonte estudado. Logo, o modelo SARIMA apresenta adequação superior ao modelo ETS no assunto tratado durante a atual seção.
+
+Por fim, vale notar também que o desenho de ambos os modelos é bem parecido, possuindo apenas duas diferenças:
+
+* No horizonte 3, o modelo ETS possui um aumento no erro absoluto médio em relação ao horizonte anterior, enquanto o modelo SARIMA demonstra decrescimento.
+* O modelo ETS possui erro absoluto médio menor no horizonte 5 em relação ao horizonte 4, enquanto o inverso ocorre no SARIMA.
+
+\newpage
+
+# Previsões
+
+Dado o desempenho superior dos modelos selecionados em outras seções, os modelos empregados para o desenvolvimento das previsões são:
+
+* SARIMA(0,1,3)X(0,1,1)$_{12}$
+* ETS(M, $M_d$, M)
+
+Como o banco de dados M3 fornece 18 observações *out-sample* para a série de id 2726 utilizada, esse será o horizonte de previsão. Então, abaixo encontra-se as duas tabelas com todas as previsões pontuais e intervalares de confiança 90%, 95% e 99% para ambos os modelos:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pp_sarima <- mod10 %>% predict(n.ahead = 18)
+pS_90 <- mod10 %>% forecast (h = 18 , level = 90)
+pS_95 <- mod10 %>% forecast (h = 18 , level = 95)
+pS_99 <- mod10 %>% forecast (h = 18 , level = 99)
+
+x_sarima <- data.frame("LI99%" = round(pS_99$lower, 2),
+                       "LI95%" = round(pS_95$lower, 2),
+                       "LI90%" = round(pS_90$lower, 2),
+                       "previsao" = round(pp_sarima$pred, 2),
+                       "LS90%" = round(pS_90$upper, 2),
+                       "LS95%" = round(pS_95$upper, 2),
+                       "LS99%" = round(pS_99$upper, 2))
+
+colnames(x_sarima) <- c("LI 99%", "LI 95%", "LI 90%", "Prev. Pontual", "LS 90%", "LS 95%", "LS 99%")
+
+kable(x_sarima, caption = "Previsões do Modelo SARIMA")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pE_90 <- ets12 %>% forecast (h = 18 , level = 90)
+pE_95 <- ets12 %>% forecast (h = 18 , level = 95)
+pE_99 <- ets12 %>% forecast (h = 18 , level = 99)
+
+x_ets <- data.frame("LI99%" = round(pE_99$lower, 2),
+                       "LI95%" = round(pE_95$lower, 2),
+                       "LI90%" = round(pE_90$lower, 2),
+                       "previsao" = round(pE_90$mean, 2),
+                       "LS90%" = round(pE_90$upper, 2),
+                       "LS95%" = round(pE_95$upper, 2),
+                       "LS99%" = round(pE_99$upper, 2))
+
+colnames(x_ets) <- c("LI 99%", "LI 95%", "LI 90%", "Prev. Pontual", "LS 90%", "LS 95%", "LS 99%")
+
+kable(x_ets, caption = "Previsões do Modelo ETS")
+```
+
+
+E, mais abaixo, podemos visualizar gráficos comparativos entre as previsões pontuais e o valor observado dos dois modelos:
+
+```{r echo=FALSE, fig.height=7, fig.width=9, message=FALSE, warning=FALSE}
+x <- autoplot(ts(c(treino, teste), start = c(1983, 1), frequency = 12)) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsões Pontuais - Modelo SARIMA")+
+  theme_bw() +
+  autolayer(pS_90$mean, series = "Previsão") +
+  scale_colour_manual(values = c("Previsão" = "#2036b3"), breaks = c("Previsão"), name = "")
+
+y <- autoplot(ts(c(treino, teste), start = c(1983, 1), frequency = 12)) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsões Pontuais - Modelo ETS")+
+  theme_bw() +
+  autolayer(pE_90$mean, series = "Previsão") +
+  scale_colour_manual(values = c("Previsão" = "#b32020"), breaks = c("Previsão"), name = "")
+
+grid.arrange(x, y, nrow = 2)
+```
+
+Com o recurso gráfico, vemos então que os modelos parecem prever relativamente bem o valor observado, pois ambos têm um desenho aproximado do real. Além disso, percebe-se que eles também tendem a subestimar um pouco o valor verdadeiro, dado que em nenhum momento as previsões ultrapassam a linha preta ao mesmo tempo que se encontra algumas vezes bem abaixo dela, como no final da série.
+
+Curiosamente, nota-se que nesse caso o modelo ETS parece ter um desempenho preditivo superior ao modelo SARIMA, em especial nos primeiros meses da parte *out-sample*, no qual as previsões do ETS foram quase perfeitas. 
+
+Finalmente, também temos os gráficos com as previsões intervalares:
+
+```{r echo=FALSE, fig.height=11, fig.width=14, message=FALSE, warning=FALSE}
+xS <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 90% - Modelo SARIMA") +
+  theme_bw() +
+  autolayer(pS_90, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#2036b3", "Observações" = "black"), breaks = c("Previsão", "Observações"), name = "")
+
+xE <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 90% - Modelo ETS") +
+  theme_bw() +
+  autolayer(pE_90, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#b32020", "Observações" = "black"), breaks = c("Previsão", "Observações"), name = "")
+
+yS <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 95% - Modelo SARIMA") +
+  theme_bw() +
+  autolayer(pS_95, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#2036b3", "Observações" = "black"), breaks = c("Previsão", "Observações"), name = "")
+
+yE <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 95% - Modelo ETS") +
+  theme_bw() +
+  autolayer(pE_95, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#b32020", "Observações" = "black"), breaks = c("Previsão", "Observações"), name = "")
+
+zS <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 99% - Modelo SARIMA") +
+  theme_bw() +
+  autolayer(pS_99, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#2036b3", "Observações" = "black"), breaks = c("Previsão", "Observações"), name = "")
+
+zE <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 99% - Modelo ETS") +
+  theme_bw() +
+  autolayer(pE_99, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#b32020", "Observações" = "black"), breaks = c("Previsão", "Observações"), name = "")
+
+grid.arrange(xS, xE, yS, yE, zS, zE, nrow = 3, newpage = F)
+```
+
+Analisando os gráficos, percebe-se que as previsões intervalares de ambos os modelos ficaram muito boas, englobando quase ou mesmo todos os valores verdadeiros; isso vale inclusive no intervalo de 90% de confiança, mesmo possuindo uma amplitude menor que os demais.
+
+## Modelo M
+
+Por fim, montaremos um novo modelo "M", cuja previsões pontuais consistem da média entre as previsões dos modelos ARIMA e ETS. Logo, temos a tabela e o gráfico:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+M <- (pS_90$mean + pE_90$mean)/2
+
+kable(data.frame("Horizonte" = c(1:18), "Prev. Pontual" = M),
+      caption = "Previsões do Modelo M")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=2.5}
+autoplot(ts(c(treino, teste), start = c(1983, 1), frequency = 12)) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsões Pontuais - Modelo M")+
+  theme_bw() +
+  autolayer(M, series = "Previsão") +
+  scale_colour_manual(values = c("Previsão" = "#e6bf00"), breaks = c("Previsão"), name = "")
+```
+
+Naturalmente, como os modelos SARIMA e ETS demonstraram bom ajuste na série, o modelo M também apresenta adequação ao dados, já que o mesmo é originado dos dois primeiros.
+
+\newpage
+
+# Acurácia do modelo
+
+Por fim, a última etapa do presente relatório é averiguar a acurácia dos três modelos construídos; nesse sentido, a métrica da qual será calculada é o Erro Absoluto Médio (MAE em inglês) das previsões. Para efeito comparativo, vamos utilizar também as seguintes funções automáticas e os respectivos modelos selecionados pelas mesmas:
+
+* auto.arima
+* ses
+* holt
+* ets
+* stlf
+* bats
+* tbats
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+autoarima_pred <- forecast(auto.arima(treino), h = h)
+ses_pred <- ses(treino, h = h)
+holt_pred <- holt(treino , h = h)
+autoets_pred <- forecast(ets(treino), h = h)
+stlf_pred <- stlf(treino, h = h)
+bats_pred <- forecast(bats(treino), h = h)
+tbats_pred <- forecast(tbats(treino), h = h)
+
+lista <- list(pS_95, pE_95, autoarima_pred, ses_pred, holt_pred, 
+             autoets_pred, stlf_pred, bats_pred, tbats_pred)
+
+mae <- unlist(lapply(lista, function(x) return(mean(abs(teste - x$mean)))))
+
+MAE <- data.frame("MAE" = mae)
+MAE <- rbind(mean(abs(teste - M)), MAE)
+
+row.names(MAE) <- c("Modelo M", "Modelo SARIMA Manual", "Modelo ETS Manual",
+                                "auto.arima", "SES", "Holt", "ETS Automático",
+                                "stlf", "bats", "tbats")
+
+kable(MAE, caption = "Comparação de benchmarks dos modelos")
+```
+
+Pelo MAE, o modelo com melhor desempenho é o Holt, seguido pelo modelo SARIMA(4,0,0)x(0,1,1)$_{12}$ escolhido pelo auto.arima; entre os piores, configura-se o SES e stlf.
+
+Dos modelos manuais, o ETS(M,$M_d$,M) foi o mais acurado, enquanto o SARIMA(0,1,3)x(0,1,1)$_{12}$ foi o pior. 
+
+\newpage
+
+# Códigos utilizados
+
+\fontsize{10pt}{15pt}\selectfont
+
+```{r eval=F}
+# importação dos dados
+
+pacman::p_load("Mcomp", "forecast", "ggplot2", "tseries", "knitr", "gridExtra",
+               "forecTheta")
+
+data(M3)
+id <- 2726
+M3[[id]]
+h <- M3[[id]]$h
+treino <- M3[[id]]$x
+teste <- M3[[id]]$xx
+
+
+# gráfico da série histórica
+
+autoplot(treino) +
+  labs(x = "Ano", y = "Valores (US$)", title = "Lucro médio do setor de manufatura") +
+  theme_bw()
+
+
+# decomposição MSTL
+
+decomp.mstl <- mstl(treino)
+autoplot(decomp.mstl) +
+  labs(x = "Ano", title = "Decomposição via MSTL") +
+  theme_bw()
+
+
+# estacionariedade
+
+kpss.test(treino)
+ndiffs(treino)
+
+x <- data.frame("KPSS" = c("<0.01", "1"),
+                row.names = c("p-valor", "ndiffs"))
+
+kable(x)
+
+
+# primeira diferença
+
+treino_d <- diff(treino)
+
+x <- autoplot(treino) +
+  labs(x = "Ano", y = "Valores", title = "Série Original") +
+  theme_bw()
+
+y <- autoplot(treino_d) +
+  labs(x = "Ano", y = "Valores", title = "Primeira Diferença") +
+  theme_bw()
+
+grid.arrange(x, y, newpage = F, nrow = 2)
+
+kpss.test(treino_d)
+
+x <- data.frame("KPSS" = c(">0.1", "0"), 
+                row.names = c("p-valor", "ndiffs"))
+
+kable(x)
+
+# diferença sazonal
+
+nsdiffs(treino_d)
+
+x <- data.frame("nsdiffs" = c(1))
+
+kable(x)
+
+treino_d2 <- diff(treino_d, lag = 12)
+
+x <- autoplot(treino_d) +
+  labs(x = "Ano", y = "Valores", title = "Primeira Diferença") +
+  theme_bw()
+
+y <- autoplot(treino_d2) +
+  labs(x = "Ano", y = "Valores", title = "Diferença Sazonal") +
+  theme_bw()
+
+grid.arrange(x, y, newpage = F, nrow = 2)
+
+
+# acf e pacf
+
+par(mfrow = c(1, 2))
+acf(treino_d2, lag.max = 5*12, main = "")
+pacf(treino_d2, lag.max = 5*12, main = "")
+
+
+# modelos arima
+
+mod1 <- arima(treino, order = c(0, 1, 1), seasonal = c(0, 1, 0))
+mod2 <- arima(treino, order = c(0, 1, 3), seasonal = c(0, 1, 0))
+mod3 <- arima(treino, order = c(1, 1, 1), seasonal = c(0, 1, 0))
+mod4 <- arima(treino, order = c(1, 1, 3), seasonal = c(0, 1, 0))
+
+mod5 <- arima(treino, order = c(0, 1, 1), seasonal = c(1, 1, 0))
+mod6 <- arima(treino, order = c(0, 1, 3), seasonal = c(1, 1, 0))
+mod7 <- arima(treino, order = c(1, 1, 1), seasonal = c(1, 1, 0))
+mod8 <- arima(treino, order = c(1, 1, 3), seasonal = c(1, 1, 0))
+
+mod9 <- arima(treino, order = c(0, 1, 1), seasonal = c(0, 1, 1))
+mod10 <- arima(treino, order = c(0, 1, 3), seasonal = c(0, 1, 1))
+mod11 <- arima(treino, order = c(1, 1, 1), seasonal = c(0, 1, 1))
+mod12 <- arima(treino, order = c(1, 1, 3), seasonal = c(0, 1, 1))
+
+mod13 <- arima(treino, order = c(0, 1, 1), seasonal = c(1, 1, 1))
+mod14 <- arima(treino, order = c(0, 1, 3), seasonal = c(1, 1, 1))
+mod15 <- arima(treino, order = c(1, 1, 1), seasonal = c(1, 1, 1))
+mod16 <- arima(treino, order = c(1, 1, 3), seasonal = c(1, 1, 1))
+
+coeff <- data.frame(phi1 = c("", "", -0.177, -0.755,
+                             "", "", -0.142, -0.135,
+                             "", "", -0.142, -0.802,
+                             "", "", -0.142, -0.584),
+                    
+                    theta1 = c(-0.43, -0.514, -0.306, 0.312,
+                               -0.403, -0.436, -0.299, -0.305, 
+                               -0.366, -0.363, -0.255, 0.454, 
+                               -0.364, -0.361, -0.253, 0.217),
+                    
+                    theta2 = c("", 0.04, "", -0.376,
+                               "", 0.001, "", -0.063,
+                               "", 0.031, "", -0.280,
+                               "", 0.029, "", -0.188),
+                    
+                    theta3 = c("", 0.277, "", 0.312,
+                               "", 0.289, "", 0.291,
+                               "", 0.282, "", 0.266,
+                               "", 0.282, "", 0.278),
+                    
+                    varPhi1 = c("", "", "", "",
+                                -0.473, -0.457, -0.470, -0.459,
+                                "", "", "", "",
+                                -0.059, -0.062, -0.058, -0.032),
+                    
+                    varTheta1 = c("", "", "", "",
+                                  "", "", "", "",
+                                  -0.659, -0.646, -0.653, -0.641,
+                                  -0.617, -0.603, -0.612, -0.646),
+                    
+                    row.names = c("Modelo 1", "Modelo 2", "Modelo 3",
+                                  "Modelo 4", "Modelo 5", "Modelo 6",
+                                  "Modelo 7", "Modelo 8", "Modelo 9", 
+                                  "Modelo 10", "Modelo 11", "Modelo 12", 
+                                  "Modelo 13", "Modelo 14", "Modelo 15", 
+                                  "Modelo 16"))
+
+kable(coeff, caption = "Parâmetros Estimados dos Modelos")
+
+# parcimonia
+
+n <- length(treino)
+k <- c(1, 3, 2, 4,
+       2, 4, 3, 5,
+       2, 4, 3, 5,
+       3, 5, 4, 6)
+aic.arima <- unlist(lapply(list(mod1,mod2,mod3,mod4,
+                                mod5, mod6, mod7, mod8,
+                                mod9, mod10, mod11, mod12,
+                                mod13, mod14, mod15, mod16), AIC))
+aicc.arima <- aic.arima + (2*k^2 + 2*k)/(n - k - 1)
+
+x <- data.frame("AIC" = aic.arima, "AICc" = aicc.arima, 
+                row.names = c("Modelo 1", "Modelo 2", "Modelo 3", "Modelo 4",
+                              "Modelo 5", "Modelo 6", "Modelo 7", "Modelo 8",
+                              "Modelo 9", "Modelo 10", "Modelo 11", "Modelo 12",
+                              "Modelo 13", "Modelo 14", "Modelo 15", "Modelo 16"))
+
+kable(x, caption = "Critérios de Informação de Akaike")
+
+
+# modelos ets
+
+ets1 <- ets(treino, model = "AAA", damped = F)
+ets2 <- ets(treino, model = "AAA", damped = T)
+ets3 <- ets(treino, model = "AMA", damped = F, restrict = F)
+ets4 <- ets(treino, model = "AMA", damped = T, restrict = F)
+ets5 <- ets(treino, model = "MAA", damped = F)
+ets6 <- ets(treino, model = "MAA", damped = T)
+ets7 <- ets(treino, model = "MMA", damped = F, restrict = F)
+ets8 <- ets(treino, model = "MMA", damped = T, restrict = F)
+ets9 <- ets(treino, model = "MAM", damped = F)
+ets10 <- ets(treino, model = "MAM", damped = T)
+ets11 <- ets(treino, model = "MMM", damped = F)
+ets12 <- ets(treino, model = "MMM", damped = T)
+
+df <- data.frame("AIC" = c(ets1$aic, ets2$aic, ets3$aic, ets4$aic,
+                           ets5$aic, ets6$aic, ets7$aic, ets8$aic,
+                           ets9$aic, ets10$aic, ets11$aic, ets12$aic),
+                 "AICc" = c(ets1$aicc, ets2$aicc, ets3$aicc, ets4$aicc,
+                            ets5$aicc, ets6$aicc, ets7$aicc, ets8$aicc,
+                            ets9$aicc, ets10$aicc, ets11$aicc, ets12$aicc),
+                 row.names = c("Modelo 1", "Modelo 2", "Modelo 3", "Modelo 4", 
+                               "Modelo 5", "Modelo 6", "Modelo 7", "Modelo 8", 
+                               "Modelo 9", "Modelo 10", "Modelo 11", "Modelo 12"))
+
+kable(df, caption = "Critérios de Informação de Akaike")
+
+df <- data.frame("alpha" = 0.6425, "beta" = 0.0253, gamma = "0.0001",
+                 "l0" = 3441.5265, "b0" = 1.055)
+
+kable(df, caption = "Coeficientes estimados do Modelo ETS(M, Md, M)")
+
+df <- data.frame("S-11" = 1.0235, "S-10" = 1.0073, "S-9" = 1.0007, "S-8" = 1.007,
+                 "S-7" = 0.9921, "S-6" = 0.9904)
+
+kable(df, caption = "Parâmetros sazonais iniciais")
+
+df <- data.frame("S-5" = 1.0035, "S-4" = 0.9975, "S-3" = 0.9926, "S-2" = 0.9977,
+                 "S-1" = 0.9902, "S0" = 0.9976)
+
+kable(df, caption = "Parâmetros sazonais iniciais")
+
+
+# analise de residuos
+
+res_sarima <- window(mod10$residuals, start = time(treino)[13])
+
+
+x <- autoplot(res_sarima) +
+  labs(x = "Ano", y = "Resíduos") +
+  ggtitle("Estacionariedade")+
+  theme_bw()
+
+y <- data.frame(res_sarima) %>%
+  ggplot(aes(sample = res_sarima)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x = "Quantis Teóricos", y = "Quantis Amostrais") +
+  ggtitle("Normalidade")+
+  theme_bw()
+
+
+grid.arrange(x, y, newpage = F, nrow = 1)
+
+par(mfrow = c(1, 2))
+acf(res_sarima, lag.max = 7*4, main = "Autocorrelações")
+pacf(res_sarima, lag.max = 7*4, main = "Autocorrelações Parciais")
+
+
+a <- kpss.test(res_sarima)
+b <- shapiro.test(res_sarima)
+c <- Box.test(res_sarima, lag = 19, type = "Ljung-Box", fitdf = 4)
+
+x <- data.frame("Teste" = c("KPSS", "Shapiro-Wilk", "Ljung-Box"),
+                "Hipótese" = c("Estacionariedade", "Normalidade", "Independência"),
+                "Estatística" = round(c(a$statistic, b$statistic, c$statistic), 3),
+                "p-valor" = round(c(a$p.value, b$p.value, c$p.value), 3),
+                row.names = NULL)
+
+kable(x, caption = "Testes de Hipóteses")
+
+res_ets <- ets12$residuals
+
+
+x <- autoplot(res_ets) +
+  labs(x = "Ano", y = "Resíduos") +
+  ggtitle("Estacionariedade")+
+  theme_bw()
+
+y <- data.frame(res_ets) %>%
+  ggplot(aes(sample = res_ets)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x = "Quantis Teóricos", y = "Quantis Amostrais") +
+  ggtitle("Normalidade")+
+  theme_bw()
+
+
+grid.arrange(x, y, newpage = F, nrow = 1)
+
+par(mfrow = c(1, 2))
+acf(res_ets, lag.max = 7*4, main = "Autocorrelações")
+pacf(res_ets, lag.max = 7*4, main = "Autocorrelações Parciais")
+
+a <- kpss.test(res_ets)
+b <- shapiro.test(res_ets)
+c <- Box.test(res_ets, lag = 15, type = "Ljung-Box", fitdf = 3)
+
+x <- data.frame("Teste" = c("KPSS", "Shapiro-Wilk", "Ljung-Box"),
+                "Hipótese" = c("Estacionariedade", "Normalidade", "Independência"),
+                "Estatística" = round(c(a$statistic, b$statistic, c$statistic), 3),
+                "p-valor" = round(c(a$p.value, b$p.value, c$p.value), 3),
+                row.names = NULL)
+
+kable(x, caption = "Testes de Hipóteses")
+
+
+# estudo da capacidade preditiva
+
+origem <- length(treino) - 14
+erros_sarima <- data.frame()
+erros_ets <- data.frame()
+mes_fim <- 7
+ano_fim <- 1991
+
+for (i in 1:10) {
+  serie_janela <- ts(treino[1:origem], start = c(1983, 1),
+                     end = c(ano_fim, mes_fim), frequency = 12)
+  
+  
+  janela_ets <- ets(serie_janela, model = "MMM", damped = T)
+  janela_sarima <- arima(serie_janela, order = c(0, 1, 3), seasonal = c(0, 1, 1))
+  
+  previsao_ets <- forecast(janela_ets, h = 5)
+  previsao_sarima <- forecast(janela_sarima, h = 5)
+  
+  errosEts_janela <- treino[(origem + 1):(origem + 5)] -  previsao_ets$mean
+  errosSarima_janela <- treino[(origem + 1):(origem + 5)] - previsao_sarima$mean 
+  
+  erros_ets <- rbind(erros_ets, errosEts_janela)
+  erros_sarima <- rbind(erros_sarima, errosSarima_janela)
+  
+  origem <- origem + 1
+  mes_fim <- mes_fim + 1
+  
+  if (mes_fim == 13){
+    mes_fim <- 1
+    ano_fim <- 1992
+  }
+}
+
+colnames(erros_ets) <- c("e1", "e2", "e3", "e4", "e5")
+colnames(erros_sarima) <- c("e1", "e2", "e3", "e4", "e5")
+
+row.names(erros_ets) <- c("Passo 1", "Passo 2", "Passo 3", "Passo 4", "Passo 5",
+                          "Passo 6","Passo 7","Passo 8","Passo 9","Passo 10")
+row.names(erros_sarima) <- c("Passo 1", "Passo 2", "Passo 3", "Passo 4", "Passo 5",
+                             "Passo 6","Passo 7","Passo 8","Passo 9","Passo 10")
+
+
+erro_medio <- data.frame("Horizonte" = c(1:5),
+                         "erros" = c(sum(abs(erros_sarima$e1)) / 10,
+                                     sum(abs(erros_sarima$e2)) / 10,
+                                     sum(abs(erros_sarima$e3)) / 10,
+                                     sum(abs(erros_sarima$e4)) / 10,
+                                     sum(abs(erros_sarima$e5)) / 10,
+                                     sum(abs(erros_ets$e1)) / 10,
+                                     sum(abs(erros_ets$e2)) / 10,
+                                     sum(abs(erros_ets$e3)) / 10,
+                                     sum(abs(erros_ets$e4)) / 10,
+                                     sum(abs(erros_ets$e5)) / 10),
+                         "modelo" = c(rep("SARIMA", 5), rep("ETS", 5)))
+
+kable(erros_sarima, caption = "Validação cruzada por janela deslizante do Modelo SARIMA")
+
+kable(erros_ets, caption = "Validação cruzada por janela deslizante do Modelo ETS")
+
+ggplot(erro_medio, aes(x = erro_medio$Horizonte, y = erro_medio$erros))+
+  geom_point(aes(color = erro_medio$modelo))+
+  geom_line(aes(color = erro_medio$modelo))+
+  scale_color_manual(values=c("#b32020", "#2036b3"), 
+                     name="Modelo",
+                     labels=c("ETS", "SARIMA"))+
+  theme_bw()+
+  labs(x = "Horizonte de Previsão", y = "Erro Absoluto Médio do Modelo",
+       title = "Erro Médio dos Modelos em cada Horizonte")
+
+
+# previsoes
+
+pp_sarima <- mod10 %>% predict(n.ahead = 18)
+pS_90 <- mod10 %>% forecast (h = 18 , level = 90)
+pS_95 <- mod10 %>% forecast (h = 18 , level = 95)
+pS_99 <- mod10 %>% forecast (h = 18 , level = 99)
+
+x_sarima <- data.frame("LI99%" = round(pS_99$lower, 2),
+                       "LI95%" = round(pS_95$lower, 2),
+                       "LI90%" = round(pS_90$lower, 2),
+                       "previsao" = round(pp_sarima$pred, 2),
+                       "LS90%" = round(pS_90$upper, 2),
+                       "LS95%" = round(pS_95$upper, 2),
+                       "LS99%" = round(pS_99$upper, 2))
+
+colnames(x_sarima) <- c("LI 99%", "LI 95%", "LI 90%", "Prev. Pontual",
+                        "LS 90%", "LS 95%", "LS 99%")
+
+kable(x_sarima, caption = "Previsões do Modelo SARIMA")
+
+pE_90 <- ets12 %>% forecast (h = 18 , level = 90)
+pE_95 <- ets12 %>% forecast (h = 18 , level = 95)
+pE_99 <- ets12 %>% forecast (h = 18 , level = 99)
+
+x_ets <- data.frame("LI99%" = round(pE_99$lower, 2),
+                    "LI95%" = round(pE_95$lower, 2),
+                    "LI90%" = round(pE_90$lower, 2),
+                    "previsao" = round(pE_90$mean, 2),
+                    "LS90%" = round(pE_90$upper, 2),
+                    "LS95%" = round(pE_95$upper, 2),
+                    "LS99%" = round(pE_99$upper, 2))
+
+colnames(x_ets) <- c("LI 99%", "LI 95%", "LI 90%", "Prev. Pontual",
+                     "LS 90%", "LS 95%", "LS 99%")
+
+kable(x_ets, caption = "Previsões do Modelo ETS")
+
+
+x <- autoplot(ts(c(treino, teste), start = c(1983, 1), frequency = 12)) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsões Pontuais - Modelo SARIMA")+
+  theme_bw() +
+  autolayer(pS_90$mean, series = "Previsão") +
+  scale_colour_manual(values = c("Previsão" = "#2036b3"), breaks = c("Previsão"),
+                      name = "")
+
+y <- autoplot(ts(c(treino, teste), start = c(1983, 1), frequency = 12)) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsões Pontuais - Modelo ETS")+
+  theme_bw() +
+  autolayer(pE_90$mean, series = "Previsão") +
+  scale_colour_manual(values = c("Previsão" = "#b32020"), breaks = c("Previsão"),
+                      name = "")
+
+grid.arrange(x, y, nrow = 2)
+
+
+xS <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 90% - Modelo SARIMA") +
+  theme_bw() +
+  autolayer(pS_90, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#2036b3", "Observações" = "black"),
+                      breaks = c("Previsão", "Observações"), name = "")
+
+xE <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 90% - Modelo ETS") +
+  theme_bw() +
+  autolayer(pE_90, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#b32020", "Observações" = "black"),
+                      breaks = c("Previsão", "Observações"), name = "")
+
+yS <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 95% - Modelo SARIMA") +
+  theme_bw() +
+  autolayer(pS_95, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#2036b3", "Observações" = "black"),
+                      breaks = c("Previsão", "Observações"), name = "")
+
+yE <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 95% - Modelo ETS") +
+  theme_bw() +
+  autolayer(pE_95, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#b32020", "Observações" = "black"),
+                      breaks = c("Previsão", "Observações"), name = "")
+
+zS <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 99% - Modelo SARIMA") +
+  theme_bw() +
+  autolayer(pS_99, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#2036b3", "Observações" = "black"),
+                      breaks = c("Previsão", "Observações"), name = "")
+
+zE <- autoplot(treino) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsão de 99% - Modelo ETS") +
+  theme_bw() +
+  autolayer(pE_99, series = "Previsão") +
+  autolayer(teste, series = "Observações") +
+  scale_colour_manual(values = c("Previsão" = "#b32020", "Observações" = "black"),
+                      breaks = c("Previsão", "Observações"), name = "")
+
+grid.arrange(xS, xE, yS, yE, zS, zE, nrow = 3, newpage = F)
+
+
+# modelo M
+
+M <- (pS_90$mean + pE_90$mean)/2
+
+kable(data.frame("Horizonte" = c(1:18), "Prev. Pontual" = M),
+      caption = "Previsões do Modelo M")
+
+autoplot(ts(c(treino, teste), start = c(1983, 1), frequency = 12)) +
+  xlab("Ano") +
+  ylab("Valor") +
+  ggtitle("Previsões Pontuais - Modelo M")+
+  theme_bw() +
+  autolayer(M, series = "Previsão") +
+  scale_colour_manual(values = c("Previsão" = "#e6bf00"),
+                      breaks = c("Previsão"), name = "")
+
+
+# acuracia do modelo
+
+autoarima_pred <- forecast(auto.arima(treino), h = h)
+ses_pred <- ses(treino, h = h)
+holt_pred <- holt(treino , h = h)
+autoets_pred <- forecast(ets(treino), h = h)
+stlf_pred <- stlf(treino, h = h)
+bats_pred <- forecast(bats(treino), h = h)
+tbats_pred <- forecast(tbats(treino), h = h)
+
+lista <- list(pS_95, pE_95, autoarima_pred, ses_pred, holt_pred, 
+              autoets_pred, stlf_pred, bats_pred, tbats_pred)
+
+mae <- unlist(lapply(lista, function(x) return(mean(abs(teste - x$mean)))))
+
+MAE <- data.frame("MAE" = mae)
+MAE <- rbind(mean(abs(teste - M)), MAE)
+
+row.names(MAE) <- c("Modelo M", "Modelo SARIMA Manual", "Modelo ETS Manual",
+                    "auto.arima", "SES", "Holt", "ETS Automático",
+                    "stlf", "bats", "tbats")
+
+kable(MAE, caption = "Comparação de benchmarks dos modelos")
+```
